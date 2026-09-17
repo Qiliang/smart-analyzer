@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Analyzer</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #1a1f24;
+      --muted: #5c6770;
+      --line: #d7dee5;
+      --accent: #0f6e56;
+      --accent-soft: #e6f4ef;
+      --danger: #b42318;
+      --warn: #b54708;
+      --ok: #027a48;
+      --mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+      --sans: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #d9efe7 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #e8eef5 0%, transparent 50%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    header {
+      padding: 28px 28px 12px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+      font-weight: 650;
+    }
+    header p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+    .tab {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .tab.active {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+    main {
+      max-width: 1100px;
+      margin: 16px auto 40px;
+      padding: 0 28px;
+      display: grid;
+      gap: 16px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(26, 31, 36, 0.04);
+    }
+    .panel h2 {
+      margin: 0 0 14px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    input, select, button {
+      font: inherit;
+    }
+    input, select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-width: 90px;
+      background: #fff;
+      color: var(--ink);
+    }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 14px;
+      cursor: pointer;
+    }
+    button.ghost {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button.danger {
+      background: #fff;
+      color: var(--danger);
+      border: 1px solid #f3c0bb;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 500; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .badge.running { background: #fff4e5; color: var(--warn); }
+    .badge.error { background: #fef3f2; color: var(--danger); }
+    .badge.done { background: #ecfdf3; color: var(--ok); }
+    .status-cell { min-width: 140px; }
+    .progress-wrap {
+      margin-top: 6px;
+      width: 140px;
+      height: 6px;
+      background: #e8eef2;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0f6e56, #2f9e7c);
+      border-radius: 999px;
+      transition: width 0.35s ease;
+    }
+    .progress-text {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--muted);
+      max-width: 220px;
+      line-height: 1.35;
+    }
+    .auto-hint {
+      font-size: 12px;
+      color: var(--muted);
+      align-self: center;
+    }
+    .auto-hint.on { color: var(--accent); }
+    .crumb {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 12px;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    .crumb a {
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .file-name { font-family: var(--mono); }
+    .dir { font-weight: 600; }
+    .preview {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f1418;
+      color: #e8eef2;
+      padding: 12px;
+      max-height: 480px;
+      overflow: auto;
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .muted { color: var(--muted); font-size: 12px; }
+    .hidden { display: none; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    @media (max-width: 720px) {
+      header, .tabs, main { padding-left: 16px; padding-right: 16px; }
+      input[name="name"] { min-width: 160px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Smart Analyzer</h1>
+    <p>定时任务与 session 文件浏览</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="jobs">定时任务</button>
+    <button class="tab" data-tab="files">文件浏览</button>
+  </div>
+
+  <main>
+    <section id="panel-jobs">
+      <div class="panel">
+        <h2>创建定时任务</h2>
+        <form id="create-form" class="row">
+          <label>名称
+            <input name="name" value="每天凌晨分析昨天" required />
+          </label>
+          <label>小时
+            <input name="hour" type="number" min="0" max="23" value="3" required />
+          </label>
+          <label>分钟
+            <input name="minute" type="number" min="0" max="59" value="0" required />
+          </label>
+          <label>采样率
+            <select name="sample_rate">
+              <option>5</option><option>10</option><option>20</option>
+              <option>30</option><option>40</option><option>50</option>
+              <option>60</option><option>70</option><option>80</option>
+              <option>90</option><option selected>100</option>
+            </select>
+          </label>
+          <label>仅缓存
+            <select name="from_cache">
+              <option value="false" selected>否</option>
+              <option value="true">是</option>
+            </select>
+          </label>
+          <button class="primary" type="submit">创建</button>
+        </form>
+        <p class="muted">任务按上海时区 cron 触发，分析目标日为「昨天」。</p>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="justify-content: space-between;">
+          <h2 style="margin:0">任务列表</h2>
+          <button class="ghost" type="button" id="refresh-jobs">刷新</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>时间</th>
+              <th>采样</th>
+              <th>下次执行</th>
+              <th>状态</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="schedules-body"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="justify-content: space-between;">
+          <h2 style="margin:0">执行记录</h2>
+          <div class="actions">
+            <span class="auto-hint" id="runs-auto-hint"></span>
+            <button class="ghost" type="button" id="run-manual">立即跑昨天</button>
+            <button class="ghost" type="button" id="refresh-runs">刷新</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>开始</th>
+              <th>任务</th>
+              <th>日期</th>
+              <th>触发</th>
+              <th>状态</th>
+              <th>会话数</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-files" class="hidden">
+      <div class="panel">
+        <h2>session 目录</h2>
+        <div class="crumb" id="crumb"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>大小</th>
+              <th>修改时间</th>
+            </tr>
+          </thead>
+          <tbody id="files-body"></tbody>
+        </table>
+        <div id="preview-wrap" class="hidden">
+          <div class="row" style="justify-content: space-between; margin-top: 14px;">
+            <strong id="preview-title" class="file-name"></strong>
+            <span class="muted" id="preview-meta"></span>
+          </div>
+          <pre class="preview" id="preview"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+
+    function fmtSize(n) {
+      if (!n) return "-";
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      return (n / 1024 / 1024).toFixed(1) + " MB";
+    }
+
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const tab = btn.dataset.tab;
+        $("#panel-jobs").classList.toggle("hidden", tab !== "jobs");
+        $("#panel-files").classList.toggle("hidden", tab !== "files");
+        if (tab === "files") loadFiles("");
+      });
+    });
+
+    async function api(url, opts) {
+      const res = await fetch(url, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      return data;
+    }
+
+    async function loadSchedules() {
+      const items = await api("/api/schedules");
+      const body = $("#schedules-body");
+      body.innerHTML = "";
+      if (!items.length) {
+        body.innerHTML = '<tr><td colspan="6" class="muted">暂无任务</td></tr>';
+        return;
+      }
+      for (const s of items) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(s.name)}<div class="muted">${escapeHtml(s.id)}</div></td>
+          <td>${escapeHtml(s.cron_label)}</td>
+          <td>${s.sample_rate}%${s.from_cache ? " / cache" : ""}</td>
+          <td class="muted">${s.next_run_time ? escapeHtml(s.next_run_time) : "-"}</td>
+          <td><span class="badge ${s.enabled ? "done" : ""}">${s.enabled ? "启用" : "停用"}</span></td>
+          <td class="actions">
+            <button class="ghost" data-act="toggle" data-id="${s.id}" data-enabled="${s.enabled}">${s.enabled ? "停用" : "启用"}</button>
+            <button class="ghost" data-act="run" data-id="${s.id}">立刻执行</button>
+            <button class="danger" data-act="del" data-id="${s.id}">删除</button>
+          </td>`;
+        body.appendChild(tr);
+      }
+    }
+
+    async function loadRuns() {
+      const items = await api("/api/runs?limit=40");
+      const body = $("#runs-body");
+      body.innerHTML = "";
+      let hasRunning = false;
+      if (!items.length) {
+        body.innerHTML = '<tr><td colspan="7" class="muted">暂无执行记录</td></tr>';
+        setRunsAutoRefresh(false);
+        return;
+      }
+      for (const r of items) {
+        if (r.status === "running") hasRunning = true;
+        const tr = document.createElement("tr");
+        const note = r.error
+          ? escapeHtml(String(r.error).slice(0, 120))
+          : (r.report_path ? escapeHtml(r.report_path) : "-");
+        tr.innerHTML = `
+          <td>${escapeHtml(r.started_at || "")}</td>
+          <td>${escapeHtml(r.schedule_name || "")}</td>
+          <td>${escapeHtml(r.day || "")}</td>
+          <td>${escapeHtml(r.trigger || "")}</td>
+          <td class="status-cell">${renderStatus(r)}</td>
+          <td>${r.session_count == null ? "-" : r.session_count}</td>
+          <td class="muted">${note}</td>`;
+        body.appendChild(tr);
+      }
+      setRunsAutoRefresh(hasRunning);
+    }
+
+    function renderStatus(r) {
+      const badge = `<span class="badge ${escapeAttr(r.status || "")}">${escapeHtml(r.status || "")}</span>`;
+      if (r.status !== "running") {
+        if (r.status === "done" && r.progress_pct != null) {
+          return `${badge}<div class="progress-text">100%</div>`;
+        }
+        return badge;
+      }
+      const pct = typeof r.progress_pct === "number" ? r.progress_pct : null;
+      const pctLabel = pct == null ? "…" : `${pct}%`;
+      const detail = r.progress
+        ? escapeHtml(r.progress)
+        : (r.progress_phase ? escapeHtml(r.progress_phase) : "进行中");
+      const width = pct == null ? 8 : Math.max(4, Math.min(100, pct));
+      return `${badge}
+        <div class="progress-wrap" title="${detail}">
+          <div class="progress-bar" style="width:${width}%"></div>
+        </div>
+        <div class="progress-text">${pctLabel} · ${detail}</div>`;
+    }
+
+    let runsTimer = null;
+    function setRunsAutoRefresh(enabled) {
+      const hint = $("#runs-auto-hint");
+      if (enabled) {
+        hint.textContent = "自动刷新中 · 2s";
+        hint.classList.add("on");
+        if (!runsTimer) {
+          runsTimer = setInterval(() => {
+            loadRuns().catch(() => {});
+          }, 2000);
+        }
+      } else {
+        hint.textContent = "";
+        hint.classList.remove("on");
+        if (runsTimer) {
+          clearInterval(runsTimer);
+          runsTimer = null;
+        }
+      }
+    }
+
+    $("#create-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api("/api/schedules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: fd.get("name"),
+            hour: Number(fd.get("hour")),
+            minute: Number(fd.get("minute")),
+            sample_rate: Number(fd.get("sample_rate")),
+            from_cache: fd.get("from_cache") === "true",
+            enabled: true,
+          }),
+        });
+        await loadSchedules();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    $("#schedules-body").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      try {
+        if (btn.dataset.act === "del") {
+          if (!confirm("确认删除该定时任务？")) return;
+          await api(`/api/schedules/${id}`, { method: "DELETE" });
+        } else if (btn.dataset.act === "toggle") {
+          const enabled = btn.dataset.enabled !== "true";
+          await api(`/api/schedules/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          });
+        } else if (btn.dataset.act === "run") {
+          btn.disabled = true;
+          await api(`/api/schedules/${id}/run`, { method: "POST" });
+          setRunsAutoRefresh(true);
+          await loadRuns();
+          btn.disabled = false;
+        }
+        await loadSchedules();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+
+    $("#refresh-jobs").addEventListener("click", () => loadSchedules().catch(alert));
+    $("#refresh-runs").addEventListener("click", () => loadRuns().catch(alert));
+    $("#run-manual").addEventListener("click", async () => {
+      try {
+        $("#run-manual").disabled = true;
+        await api("/api/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        setRunsAutoRefresh(true);
+        await loadRuns();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        $("#run-manual").disabled = false;
+      }
+    });
+
+    let currentPath = "";
+
+    async function loadFiles(path) {
+      currentPath = path || "";
+      const data = await api(`/api/files?path=${encodeURIComponent(currentPath)}`);
+      renderCrumb(data.path);
+      const body = $("#files-body");
+      body.innerHTML = "";
+      if (data.parent !== null && data.parent !== undefined) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="dir"><a data-path="${escapeAttr(data.parent)}">..</a></td><td>-</td><td></td>`;
+        body.appendChild(tr);
+      }
+      for (const ent of data.entries) {
+        const tr = document.createElement("tr");
+        const nameClass = ent.is_dir ? "dir" : "file-name";
+        tr.innerHTML = `
+          <td class="${nameClass}"><a data-path="${escapeAttr(ent.path)}" data-dir="${ent.is_dir}">${escapeHtml(ent.name)}${ent.is_dir ? "/" : ""}</a></td>
+          <td>${ent.is_dir ? "-" : fmtSize(ent.size)}</td>
+          <td class="muted">${escapeHtml((ent.mtime || "").replace("T", " ").slice(0, 19))}</td>`;
+        body.appendChild(tr);
+      }
+    }
+
+    function renderCrumb(path) {
+      const el = $("#crumb");
+      const parts = path ? path.split("/") : [];
+      let html = `<a data-path="">session</a>`;
+      let acc = [];
+      for (const p of parts) {
+        acc.push(p);
+        html += ` / <a data-path="${escapeAttr(acc.join("/"))}">${escapeHtml(p)}</a>`;
+      }
+      el.innerHTML = html;
+    }
+
+    $("#crumb").addEventListener("click", (e) => {
+      const a = e.target.closest("a[data-path]");
+      if (!a) return;
+      loadFiles(a.dataset.path).catch(alert);
+    });
+
+    $("#files-body").addEventListener("click", async (e) => {
+      const a = e.target.closest("a[data-path]");
+      if (!a) return;
+      const path = a.dataset.path;
+      if (a.dataset.dir === "true" || a.dataset.dir === undefined && e.target.textContent === "..") {
+        // parent link has no data-dir
+      }
+      if (a.dataset.dir === "false") {
+        try {
+          const file = await api(`/api/files/content?path=${encodeURIComponent(path)}`);
+          $("#preview-wrap").classList.remove("hidden");
+          $("#preview-title").textContent = file.name;
+          $("#preview-meta").textContent = file.truncated
+            ? `已截断 · ${fmtSize(file.size)}`
+            : fmtSize(file.size);
+          $("#preview").textContent = file.text
+            ? file.content
+            : (file.message || "无法预览");
+        } catch (err) {
+          alert(err.message);
+        }
+        return;
+      }
+      loadFiles(path).catch(alert);
+    });
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+    function escapeAttr(s) {
+      return escapeHtml(s).replaceAll("'", "&#39;");
+    }
+
+    loadSchedules().catch(alert);
+    loadRuns().catch(alert);
+  </script>
+</body>
+</html>
