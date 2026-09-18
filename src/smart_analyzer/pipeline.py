@@ -9,7 +9,7 @@ from typing import Any
 
 from smart_analyzer.account import fetch_company_names
 from smart_analyzer.config import Settings, get_settings
-from smart_analyzer.pull import find_session_log, load_docs, pull_day
+from smart_analyzer.pull import find_session_log, load_docs, pull_day, purge_expired_logs
 from smart_analyzer.report import build_summary, write_reports
 from smart_analyzer.scan import SessionSample, scan_docs
 
@@ -80,4 +80,7 @@ def run_day(
     summary["summary_path"] = str(summary_path)
     if on_progress is not None:
         on_progress(f"wrote {report_path}")
+    expired = purge_expired_logs(settings=cfg)
+    if expired and on_progress is not None:
+        on_progress(f"purged expired logs={','.join(expired)}")
     return summary

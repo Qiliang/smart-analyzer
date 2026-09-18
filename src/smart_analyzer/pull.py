@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ from smart_analyzer.es import ElasticClient
 
 SESSION_END_MARKER = "Pipeline finished, cleaning up"
 _ID_RE = re.compile(r"\[ID: (?P<sid>[^\]]+)\]")
+_DAY_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # 原文: ``... | INFO    | [ID: SmartVoice-...] - body`` → ``... | INFO    | body``
 _ID_STRIP_RE = re.compile(r" \| \[ID: [^\]]+\] - ")
 _COMPACT_LOG_RE = re.compile(
@@ -72,6 +74,35 @@ def session_in_sample(session_id: str, rate: int) -> bool:
 def logs_dir_for(day: date, settings: Settings | None = None) -> Path:
     cfg = settings or get_settings()
     return cfg.logs_root / day.isoformat()
+
+
+def purge_expired_logs(
+    *,
+    settings: Settings | None = None,
+    today: date | None = None,
+) -> list[str]:
+    """删除超过保留天数的 ``logs/YYYY-MM-DD`` 目录，返回已删日期。"""
+    cfg = settings or get_settings()
+    keep_days = max(1, int(cfg.log_retention_days))
+    current = today or datetime.now(CST).date()
+    cutoff = current - timedelta(days=keep_days)
+    logs_root = Path(cfg.logs_root)
+    if not logs_root.is_dir():
+        return []
+
+    deleted: list[str] = []
+    for child in logs_root.iterdir():
+        if not child.is_dir() or not _DAY_DIR_RE.match(child.name):
+            continue
+        try:
+            day = date.fromisoformat(child.name)
+        except ValueError:
+            continue
+        if day > cutoff:
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+        deleted.append(child.name)
+    return sorted(deleted)
 
 
 def session_log_path(

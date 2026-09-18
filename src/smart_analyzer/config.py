@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     account_env: str = Field(default="prod", alias="ACCOUNT_ENV")
 
     pull_sample_rate: int = Field(default=100, alias="PULL_SAMPLE_RATE")
+    log_retention_days: int = Field(default=5, ge=1, alias="LOG_RETENTION_DAYS")
     session_root: Path = Field(default=ROOT_DIR / "session", alias="SESSION_ROOT")
 
     basic_auth_user: str = Field(default="hollycrm", alias="BASIC_AUTH_USER")

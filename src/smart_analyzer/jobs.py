@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from smart_analyzer.config import Settings, get_settings
 from smart_analyzer.pipeline import run_day, yesterday
+from smart_analyzer.pull import purge_expired_logs
 
 CST = timezone(timedelta(hours=8))
 _MAX_RUNS = 200
@@ -90,9 +91,17 @@ class JobManager:
         for spec in self._schedules.values():
             if spec.enabled:
                 self._register(spec)
+        self._scheduler.add_job(
+            self._purge_expired_logs,
+            CronTrigger(hour=4, minute=10, timezone="Asia/Shanghai"),
+            id="purge-expired-logs",
+            replace_existing=True,
+            name="清理过期日志",
+        )
         if not self._started:
             self._scheduler.start()
             self._started = True
+        self._purge_expired_logs()
 
     def shutdown(self) -> None:
         if self._started:
@@ -300,6 +309,9 @@ class JobManager:
             return
         self._last_progress_flush[record.id] = now
         self._update_run(record)
+
+    def _purge_expired_logs(self) -> None:
+        purge_expired_logs(settings=self._settings)
 
     def _seed_default(self) -> None:
         spec = ScheduleSpec(
