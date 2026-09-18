@@ -28,7 +28,9 @@ _NOTE = (
     "STT=火山定稿延迟(末次interim→定稿); "
     "Agent=MPAAS_AGENT MetricsFrame.value; "
     "Agg=LLMTextFrame→AggregatedTextFrame; "
-    "1st=on_tts_first_audio.ttfb 或 TTS MetricsFrame.ttfb"
+    "1st=on_tts_first_audio.ttfb 或 TTS MetricsFrame.ttfb; "
+    "听到=出声前最后一次 UserStoppedSpeaking→首次 BotStartedSpeaking"
+    "（续说覆盖；含垫词/嗯，不含欢迎语）"
 )
 
 
@@ -63,6 +65,7 @@ class GroupBucket:
     agent: list[float] = field(default_factory=list)
     tts_agg: list[float] = field(default_factory=list)
     tts_first: list[float] = field(default_factory=list)
+    hears: list[float] = field(default_factory=list)
 
 
 def build_summary(
@@ -85,6 +88,7 @@ def build_summary(
             bucket.agent.extend(s.agent_first_token)
             bucket.tts_agg.extend(s.tts_agg_lags)
             bucket.tts_first.extend(s.tts_first_audio)
+            bucket.hears.extend(s.user_hears_sound)
 
     accounts_sorted = sorted(
         by_account.keys(),
@@ -103,6 +107,7 @@ def build_summary(
             "agent_first_token": series_stats(bucket.agent),
             "tts_aggregation": series_stats(bucket.tts_agg),
             "tts_first_audio": series_stats(bucket.tts_first),
+            "user_hears_sound": series_stats(bucket.hears),
         }
 
     accounts_out: list[dict[str, Any]] = []
@@ -175,6 +180,10 @@ def _iter_rows(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "first_p50": _stat(node, "tts_first_audio", "p50"),
                 "first_p95": _stat(node, "tts_first_audio", "p95"),
                 "first_p99": _stat(node, "tts_first_audio", "p99"),
+                "hears_n": int(_stat(node, "user_hears_sound", "count") or 0),
+                "hears_p50": _stat(node, "user_hears_sound", "p50"),
+                "hears_p95": _stat(node, "user_hears_sound", "p95"),
+                "hears_p99": _stat(node, "user_hears_sound", "p99"),
             }
         )
 
@@ -277,6 +286,10 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
         "first_p50",
         "first_p95",
         "first_p99",
+        "hears_n",
+        "hears_p50",
+        "hears_p95",
+        "hears_p99",
     ]
     percentile_cols = [
         "stt_p50",
@@ -291,6 +304,9 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
         "first_p50",
         "first_p95",
         "first_p99",
+        "hears_p50",
+        "hears_p95",
+        "hears_p99",
     ]
     tbl = GT(
         df[["label", "kind", *metric_cols]],
@@ -318,6 +334,10 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
             label="TTS 首音",
             columns=["first_n", "first_p50", "first_p95", "first_p99"],
         )
+        .tab_spanner(
+            label="听到声音",
+            columns=["hears_n", "hears_p50", "hears_p95", "hears_p99"],
+        )
         .cols_label(
             stt_n="n",
             stt_p50="p50",
@@ -335,8 +355,12 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
             first_p50="p50",
             first_p95="p95",
             first_p99="p99",
+            hears_n="n",
+            hears_p50="p50",
+            hears_p95="p95",
+            hears_p99="p99",
         )
-        .fmt_integer(columns=["stt_n", "agent_n", "agg_n", "first_n"])
+        .fmt_integer(columns=["stt_n", "agent_n", "agg_n", "first_n", "hears_n"])
         .fmt_number(columns=percentile_cols, decimals=3)
         .sub_missing(missing_text="-")
         .tab_source_note(source_note=md(_NOTE))

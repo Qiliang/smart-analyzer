@@ -1,4 +1,4 @@
-"""按会话扫描目标帧/事件，抽出账号与四类指标样本（无 Turn 状态机）。"""
+"""按会话扫描目标帧/事件，抽出账号与五类指标样本（无 Turn 状态机）。"""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ class SessionSample:
     agent_first_token: list[float] = field(default_factory=list)
     tts_agg_lags: list[float] = field(default_factory=list)
     tts_first_audio: list[float] = field(default_factory=list)
+    user_hears_sound: list[float] = field(default_factory=list)
 
 
 def _session_id_matches(line_sid: str, query: str) -> bool:
@@ -141,6 +142,7 @@ def scan_docs(session_id: str, docs: Sequence[dict[str, Any]]) -> SessionSample:
     sample = SessionSample(session_id=session_id)
     last_volc_interim_ts: float | None = None
     pending_llm_text_ts: float | None = None
+    pending_user_stop_ts: float | None = None
     # 每次 Agent 响应开始后只收第一条 MPAAS_AGENT value（首字符）
     agent_first_armed = False
     saw_tts_first_audio_event = False
@@ -165,6 +167,15 @@ def scan_docs(session_id: str, docs: Sequence[dict[str, Any]]) -> SessionSample:
 
             if frame.name == "UserStoppedSpeakingFrame":
                 sample.turns += 1
+                pending_user_stop_ts = frame.ts
+                continue
+
+            if frame.name == "BotStartedSpeakingFrame":
+                if pending_user_stop_ts is not None:
+                    lag = frame.ts - pending_user_stop_ts
+                    if lag >= 0:
+                        sample.user_hears_sound.append(lag)
+                    pending_user_stop_ts = None
                 continue
 
             if frame.name == "LLMFullResponseStartFrame":
