@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from smart_analyzer.config import ROOT_DIR, get_settings
-from smart_analyzer.files import list_dir, read_file
+from smart_analyzer.files import list_dir, read_file, resolve_under_session
 from smart_analyzer.jobs import get_job_manager
 from smart_analyzer.pipeline import yesterday
 
@@ -75,6 +75,7 @@ class ManualRunBody(BaseModel):
     day: str | None = None
     sample_rate: int | None = None
     from_cache: bool = False
+    name: str | None = None
 
 
 @app.get("/")
@@ -166,7 +167,8 @@ def api_manual_run(
             day=target,
             sample_rate=body.sample_rate,
             from_cache=body.from_cache,
-            schedule_name="手动执行",
+            schedule_name=body.name
+            or ("重新分析" if body.from_cache else "手动执行"),
             trigger="manual",
         )
 
@@ -187,13 +189,44 @@ def api_list_files(path: str = Query(default="")) -> dict[str, Any]:
 
 
 @app.get("/api/files/content")
-def api_file_content(path: str = Query(...)) -> dict[str, Any]:
+def api_file_content(
+    path: str = Query(...),
+    format: str = Query(default="json", pattern="^(json|text)$"),
+):
     try:
-        return read_file(path)
+        data = read_file(path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="file not found") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="forbidden") from exc
+
+    if format != "text":
+        return data
+    if not data.get("text"):
+        raise HTTPException(
+            status_code=415,
+            detail=data.get("message") or "not a text file",
+        )
+    return PlainTextResponse(
+        data.get("content") or "",
+        media_type=data.get("mime") or "text/plain; charset=utf-8",
+    )
+
+
+@app.get("/api/files/download")
+def api_file_download(path: str = Query(...)):
+    try:
+        target = resolve_under_session(path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="forbidden") from exc
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(
+        path=target,
+        filename=target.name,
+        media_type="application/octet-stream",
+        content_disposition_type="attachment",
+    )
 
 
 @app.post("/jobs/run")
@@ -240,7 +273,7 @@ def trigger_job(
 @app.get("/reports/{day}")
 def get_report(
     day: str,
-    format: str = Query(default="text", pattern="^(text|json)$"),
+    format: str = Query(default="html", pattern="^(html|json|text)$"),
 ):
     cfg = get_settings()
     try:
@@ -257,10 +290,15 @@ def get_report(
             path.read_text(encoding="utf-8"), media_type="application/json"
         )
 
-    path = report_dir / "report.txt"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="report not found")
-    return PlainTextResponse(path.read_text(encoding="utf-8"))
+    html_path = report_dir / "report.html"
+    if format != "text" and html_path.exists():
+        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+    txt_path = report_dir / "report.txt"
+    if txt_path.exists():
+        return PlainTextResponse(txt_path.read_text(encoding="utf-8"))
+
+    raise HTTPException(status_code=404, detail="report not found")
 
 
 if STATIC_DIR.is_dir():

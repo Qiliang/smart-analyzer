@@ -119,7 +119,7 @@
       padding: 9px 14px;
       cursor: pointer;
     }
-    button.ghost {
+    button.ghost, a.ghost {
       background: #fff;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -185,12 +185,19 @@
       align-self: center;
     }
     .auto-hint.on { color: var(--accent); }
+    .crumb-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
     .crumb {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
-      margin-bottom: 12px;
       font-family: var(--mono);
       font-size: 13px;
     }
@@ -201,6 +208,23 @@
     }
     .file-name { font-family: var(--mono); }
     .dir { font-weight: 600; }
+    .name-with-action {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button.tiny, a.tiny {
+      padding: 4px 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    a.tiny {
+      display: inline-flex;
+      align-items: center;
+      text-decoration: none;
+      color: inherit;
+    }
     .preview {
       margin-top: 12px;
       border: 1px solid var(--line);
@@ -214,6 +238,14 @@
       font-size: 12px;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    .preview-html {
+      margin-top: 12px;
+      width: 100%;
+      min-height: 560px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
     }
     .muted { color: var(--muted); font-size: 12px; }
     .hidden { display: none; }
@@ -293,7 +325,6 @@
           <h2 style="margin:0">执行记录</h2>
           <div class="actions">
             <span class="auto-hint" id="runs-auto-hint"></span>
-            <button class="ghost" type="button" id="run-manual">立即跑昨天</button>
             <button class="ghost" type="button" id="refresh-runs">刷新</button>
           </div>
         </div>
@@ -317,7 +348,10 @@
     <section id="panel-files" class="hidden">
       <div class="panel">
         <h2>session 目录</h2>
-        <div class="crumb" id="crumb"></div>
+        <div class="crumb-row">
+          <div class="crumb" id="crumb"></div>
+          <button class="primary tiny hidden" type="button" id="reanalyze-btn">重新分析</button>
+        </div>
         <table>
           <thead>
             <tr>
@@ -329,11 +363,15 @@
           <tbody id="files-body"></tbody>
         </table>
         <div id="preview-wrap" class="hidden">
-          <div class="row" style="justify-content: space-between; margin-top: 14px;">
+          <div class="row" style="justify-content: space-between; margin-top: 14px; align-items: center;">
             <strong id="preview-title" class="file-name"></strong>
-            <span class="muted" id="preview-meta"></span>
+            <span class="actions">
+              <span class="muted" id="preview-meta"></span>
+              <a class="ghost tiny hidden" id="preview-download" download>下载</a>
+            </span>
           </div>
           <pre class="preview" id="preview"></pre>
+          <iframe class="preview-html hidden" id="preview-html" title="report preview"></iframe>
         </div>
       </div>
     </section>
@@ -350,15 +388,29 @@
     }
 
     document.querySelectorAll(".tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        const tab = btn.dataset.tab;
-        $("#panel-jobs").classList.toggle("hidden", tab !== "jobs");
-        $("#panel-files").classList.toggle("hidden", tab !== "files");
-        if (tab === "files") loadFiles("");
-      });
+      btn.addEventListener("click", () => showTab(btn.dataset.tab));
     });
+
+    function showTab(tab) {
+      document.querySelectorAll(".tab").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === tab);
+      });
+      $("#panel-jobs").classList.toggle("hidden", tab !== "jobs");
+      $("#panel-files").classList.toggle("hidden", tab !== "files");
+      if (tab === "files") loadFiles(currentPath || "").catch(alert);
+    }
+
+    const LOG_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+    let currentPath = "";
+
+    function downloadUrl(path) {
+      return `/api/files/download?path=${encodeURIComponent(path)}`;
+    }
+
+    function logDayFromPath(path) {
+      const m = /(?:^|\/)?logs\/(\d{4}-\d{2}-\d{2})$/.exec(path || "");
+      return m ? m[1] : "";
+    }
 
     async function api(url, opts) {
       const res = await fetch(url, opts);
@@ -516,31 +568,25 @@
 
     $("#refresh-jobs").addEventListener("click", () => loadSchedules().catch(alert));
     $("#refresh-runs").addEventListener("click", () => loadRuns().catch(alert));
-    $("#run-manual").addEventListener("click", async () => {
-      try {
-        $("#run-manual").disabled = true;
-        await api("/api/runs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        setRunsAutoRefresh(true);
-        await loadRuns();
-      } catch (err) {
-        alert(err.message);
-      } finally {
-        $("#run-manual").disabled = false;
-      }
-    });
-
-    let currentPath = "";
 
     async function loadFiles(path) {
       currentPath = path || "";
       const data = await api(`/api/files?path=${encodeURIComponent(currentPath)}`);
       renderCrumb(data.path);
+      const dayInPath = logDayFromPath(data.path);
+      const reBtn = $("#reanalyze-btn");
+      if (dayInPath) {
+        reBtn.classList.remove("hidden");
+        reBtn.dataset.day = dayInPath;
+      } else {
+        reBtn.classList.add("hidden");
+        reBtn.dataset.day = "";
+      }
+      const listingLogs = data.path === "logs";
       const body = $("#files-body");
       body.innerHTML = "";
+      $("#preview-wrap").classList.add("hidden");
+      $("#preview-download").classList.add("hidden");
       if (data.parent !== null && data.parent !== undefined) {
         const tr = document.createElement("tr");
         tr.innerHTML = `<td class="dir"><a data-path="${escapeAttr(data.parent)}">..</a></td><td>-</td><td></td>`;
@@ -549,8 +595,14 @@
       for (const ent of data.entries) {
         const tr = document.createElement("tr");
         const nameClass = ent.is_dir ? "dir" : "file-name";
+        const day = listingLogs && ent.is_dir && LOG_DAY_RE.test(ent.name) ? ent.name : "";
+        const action = day
+          ? `<button class="ghost tiny" type="button" data-reanalyze="${escapeAttr(day)}">重新分析</button>`
+          : (!ent.is_dir
+            ? `<a class="ghost tiny" href="${escapeAttr(downloadUrl(ent.path))}" download="${escapeAttr(ent.name)}">下载</a>`
+            : "");
         tr.innerHTML = `
-          <td class="${nameClass}"><a data-path="${escapeAttr(ent.path)}" data-dir="${ent.is_dir}">${escapeHtml(ent.name)}${ent.is_dir ? "/" : ""}</a></td>
+          <td class="${nameClass}"><span class="name-with-action"><a data-path="${escapeAttr(ent.path)}" data-dir="${ent.is_dir}">${escapeHtml(ent.name)}${ent.is_dir ? "/" : ""}</a>${action}</span></td>
           <td>${ent.is_dir ? "-" : fmtSize(ent.size)}</td>
           <td class="muted">${escapeHtml((ent.mtime || "").replace("T", " ").slice(0, 19))}</td>`;
         body.appendChild(tr);
@@ -576,12 +628,16 @@
     });
 
     $("#files-body").addEventListener("click", async (e) => {
+      if (e.target.closest("a[download]")) return;
+      const reBtn = e.target.closest("button[data-reanalyze]");
+      if (reBtn) {
+        e.preventDefault();
+        await startReanalyze(reBtn.dataset.reanalyze, reBtn);
+        return;
+      }
       const a = e.target.closest("a[data-path]");
       if (!a) return;
       const path = a.dataset.path;
-      if (a.dataset.dir === "true" || a.dataset.dir === undefined && e.target.textContent === "..") {
-        // parent link has no data-dir
-      }
       if (a.dataset.dir === "false") {
         try {
           const file = await api(`/api/files/content?path=${encodeURIComponent(path)}`);
@@ -590,9 +646,25 @@
           $("#preview-meta").textContent = file.truncated
             ? `已截断 · ${fmtSize(file.size)}`
             : fmtSize(file.size);
-          $("#preview").textContent = file.text
-            ? file.content
-            : (file.message || "无法预览");
+          const previewDownload = $("#preview-download");
+          previewDownload.href = downloadUrl(path);
+          previewDownload.setAttribute("download", file.name);
+          previewDownload.classList.remove("hidden");
+          const isHtml = /\.html?$/i.test(file.name || "");
+          const preview = $("#preview");
+          const previewHtml = $("#preview-html");
+          if (isHtml && file.text) {
+            preview.classList.add("hidden");
+            previewHtml.classList.remove("hidden");
+            previewHtml.srcdoc = file.content || "";
+          } else {
+            previewHtml.classList.add("hidden");
+            previewHtml.srcdoc = "";
+            preview.classList.remove("hidden");
+            preview.textContent = file.text
+              ? file.content
+              : (file.message || "无法预览");
+          }
         } catch (err) {
           alert(err.message);
         }
@@ -600,6 +672,35 @@
       }
       loadFiles(path).catch(alert);
     });
+
+    $("#reanalyze-btn").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      await startReanalyze(btn.dataset.day, btn);
+    });
+
+    async function startReanalyze(day, btn) {
+      if (!LOG_DAY_RE.test(day || "")) return;
+      if (!confirm(`根据 logs/${day} 里已有会话日志重新生成报告？不会再拉 ES。`)) return;
+      if (btn) btn.disabled = true;
+      try {
+        await api("/api/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            day,
+            from_cache: true,
+            name: "重新分析",
+          }),
+        });
+        showTab("jobs");
+        setRunsAutoRefresh(true);
+        await loadRuns();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
 
     function escapeHtml(s) {
       return String(s)

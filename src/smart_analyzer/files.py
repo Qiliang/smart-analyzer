@@ -15,6 +15,8 @@ _TEXT_SUFFIXES = {
     ".jsonl",
     ".log",
     ".md",
+    ".html",
+    ".htm",
     ".csv",
     ".yml",
     ".yaml",

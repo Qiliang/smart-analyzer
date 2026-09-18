@@ -58,7 +58,7 @@ def run_day(
     sample_rate: int | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """跑完整日任务，返回 summary，并写 report.txt / summary.json。"""
+    """跑完整日任务，返回 summary，并写 report.html / summary.json。"""
     cfg = settings or get_settings()
     target = day or yesterday()
     if on_progress is not None:
