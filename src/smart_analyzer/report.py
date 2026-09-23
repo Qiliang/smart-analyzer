@@ -365,7 +365,11 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
         .sub_missing(missing_text="-")
         .tab_source_note(source_note=md(_NOTE))
     )
-    return _style_table(tbl, df.to_dict("records"), table_width="100%")
+    return _style_table(tbl, df.to_dict("records"), table_width="100%").data_color(
+        columns=percentile_cols,
+        palette="Oranges",
+        na_color="white",
+    )
 
 
 def render_report(summary: Mapping[str, Any]) -> str:

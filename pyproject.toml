@@ -1,6 +1,6 @@
 [project]
 name = "smart-analyzer"
-version = "0.2.3"
+version = "0.2.4"
 description = "Smart-voice daily log pull and latency analyzer"
 readme = "README.md"
 requires-python = ">=3.11"
