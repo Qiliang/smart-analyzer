@@ -119,6 +119,36 @@ def _mpaas_first_token_value(payload: dict[str, Any]) -> float | None:
     return None
 
 
+class _VadAnchor:
+    """一条指标的下游 VAD 停声锚点。
+
+    开口清掉上一声停声并重新允许记录。停声只在 armed 时写入。
+    终点有锚点则消费并锁住，直到下一次开口；没有锚点则跳过，不锁状态。
+    """
+
+    def __init__(self) -> None:
+        self.armed = True
+        self.ts: float | None = None
+
+    def on_start(self) -> None:
+        self.ts = None
+        self.armed = True
+
+    def on_stop(self, ts: float) -> None:
+        if self.armed:
+            self.ts = ts
+
+    def consume(self, end_ts: float) -> float | None:
+        if self.ts is None:
+            return None
+        lag = end_ts - self.ts
+        self.ts = None
+        self.armed = False
+        if lag < 0:
+            return None
+        return lag
+
+
 def _tts_first_audio_from_metrics(frame: _Frame) -> float | None:
     """TTS MetricsFrame 里显式带 ttfb 的条目。"""
     if "TTS" not in frame.source and "Tts" not in frame.source:
@@ -140,9 +170,9 @@ def _tts_first_audio_from_metrics(frame: _Frame) -> float | None:
 def scan_docs(session_id: str, docs: Sequence[dict[str, Any]]) -> SessionSample:
     """扫一遍日志，只认需求相关帧/事件。"""
     sample = SessionSample(session_id=session_id)
-    last_volc_interim_ts: float | None = None
+    stt_anchor = _VadAnchor()
+    hears_anchor = _VadAnchor()
     pending_llm_text_ts: float | None = None
-    pending_user_stop_ts: float | None = None
     # 每次 Agent 响应开始后只收第一条 MPAAS_AGENT value（首字符）
     agent_first_armed = False
     saw_tts_first_audio_event = False
@@ -165,37 +195,35 @@ def scan_docs(session_id: str, docs: Sequence[dict[str, Any]]) -> SessionSample:
             if frame is None or frame.direction != "d":
                 continue
 
+            if frame.name == "VADUserStartedSpeakingFrame":
+                stt_anchor.on_start()
+                hears_anchor.on_start()
+                continue
+
+            if frame.name == "VADUserStoppedSpeakingFrame":
+                stt_anchor.on_stop(frame.ts)
+                hears_anchor.on_stop(frame.ts)
+                continue
+
             if frame.name == "UserStoppedSpeakingFrame":
                 sample.turns += 1
-                pending_user_stop_ts = frame.ts
                 continue
 
             if frame.name == "BotStartedSpeakingFrame":
-                if pending_user_stop_ts is not None:
-                    lag = frame.ts - pending_user_stop_ts
-                    if lag >= 0:
-                        sample.user_hears_sound.append(lag)
-                    pending_user_stop_ts = None
+                lag = hears_anchor.consume(frame.ts)
+                if lag is not None:
+                    sample.user_hears_sound.append(lag)
                 continue
 
             if frame.name == "LLMFullResponseStartFrame":
                 agent_first_armed = True
                 continue
 
-            if frame.name == "InterimTranscriptionFrame":
+            if frame.name == "TranscriptionWithSpeakerFrame":
                 if "VolcengineSTT" in frame.source:
-                    last_volc_interim_ts = frame.ts
-                continue
-
-            if frame.name in (
-                "TranscriptionWithSpeakerFrame",
-                "TranscriptionFrame",
-            ):
-                if "VolcengineSTT" in frame.source and last_volc_interim_ts is not None:
-                    lag = frame.ts - last_volc_interim_ts
-                    if lag >= 0:
+                    lag = stt_anchor.consume(frame.ts)
+                    if lag is not None:
                         sample.stt_confirm_lags.append(lag)
-                last_volc_interim_ts = None
                 continue
 
             if frame.name == "MetricsFrame":

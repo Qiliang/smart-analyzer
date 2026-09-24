@@ -25,12 +25,12 @@ _FONT_STACK = [
     "sans-serif",
 ]
 _NOTE = (
-    "STT=火山定稿延迟(末次interim→定稿); "
+    "STT=火山定稿延迟(VAD停声→TranscriptionWithSpeaker；缺停声或续说作废不计入); "
     "Agent=MPAAS_AGENT MetricsFrame.value; "
     "Agg=LLMTextFrame→AggregatedTextFrame; "
     "1st=on_tts_first_audio.ttfb 或 TTS MetricsFrame.ttfb; "
-    "听到=出声前最后一次 UserStoppedSpeaking→首次 BotStartedSpeaking"
-    "（续说覆盖；含垫词/嗯，不含欢迎语）"
+    "听到=VAD停声→BotStartedSpeaking"
+    "（缺停声或续说作废不计入；含垫词/嗯，不含欢迎语）"
 )
 
 
