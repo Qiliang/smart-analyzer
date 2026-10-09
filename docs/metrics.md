@@ -22,3 +22,7 @@ on_tts_first_audio.ttfb 或 TTS MetricsFrame.ttfb;
 
 下游 VADUserStoppedSpeakingFrame → 下游 BotStartedSpeakingFrame。
 与 STT 定稿共用同一套锚点规则，但两条指标各自消费，一句定稿不会吃掉听到声音的起点。欢迎语出声时还没有停声锚点，不计入。含垫词。缺停声或续说作废不计入。
+
+### 慢延迟例子
+
+横向对比各 agent。对每个 agent、上面五类指标，用该 agent 自己的样本算 p95、p99（最近排名法）。留下 p95～p99（含两端）的观测；同一会话只保留该区间内最大的一条；按延迟从高到低最多 3 条。没有样本的指标不列出。每条记下 session_id，写入报告、summary.json 的 slow_examples，以及 badcases.txt（首列 session_id）。

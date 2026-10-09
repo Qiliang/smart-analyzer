@@ -1,4 +1,4 @@
-"""聚合报表：账号会话/轮次 + STT/Agent/TTS 分位数。"""
+"""聚合报表：账号会话/轮次、STT/Agent/TTS 分位数，以及各 agent 的慢延迟例子。"""
 
 from __future__ import annotations
 
@@ -32,6 +32,15 @@ _NOTE = (
     "听到=VAD停声→BotStartedSpeaking"
     "（缺停声或续说作废不计入；含垫词/嗯，不含欢迎语）"
 )
+# (summary 字段, 报告列名, SessionSample 属性)
+_METRICS: tuple[tuple[str, str, str], ...] = (
+    ("stt_confirm", "STT 定稿", "stt_confirm_lags"),
+    ("agent_first_token", "Agent 首字", "agent_first_token"),
+    ("tts_aggregation", "TTS 聚合", "tts_agg_lags"),
+    ("tts_first_audio", "TTS 首音", "tts_first_audio"),
+    ("user_hears_sound", "听到声音", "user_hears_sound"),
+)
+_TAIL_LIMIT = 3
 
 
 def percentile(values: Sequence[float], p: float) -> float:
@@ -57,6 +66,34 @@ def series_stats(values: Sequence[float]) -> dict[str, float]:
     }
 
 
+def select_tail_examples(
+    observations: Sequence[tuple[str, float]],
+    *,
+    limit: int = _TAIL_LIMIT,
+) -> list[dict[str, Any]]:
+    """各 agent 自身样本里，落在 p95～p99 的偏慢会话。
+
+    同一会话只保留区间内最大延迟，再按延迟从高到低取最多 ``limit`` 条。
+    """
+    if not observations:
+        return []
+    values = [latency for _, latency in observations]
+    p95 = percentile(values, 0.95)
+    p99 = percentile(values, 0.99)
+    best: dict[str, float] = {}
+    for session_id, latency in observations:
+        if latency < p95 or latency > p99:
+            continue
+        previous = best.get(session_id)
+        if previous is None or latency > previous:
+            best[session_id] = latency
+    ranked = sorted(best.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        {"session_id": session_id, "latency": latency, "p95": p95, "p99": p99}
+        for session_id, latency in ranked[:limit]
+    ]
+
+
 @dataclass
 class GroupBucket:
     sessions: int = 0
@@ -75,12 +112,16 @@ def build_summary(
     overall = GroupBucket()
     by_account: dict[str, GroupBucket] = defaultdict(GroupBucket)
     by_agent: dict[tuple[str, str], GroupBucket] = defaultdict(GroupBucket)
+    by_agent_obs: dict[tuple[str, str], dict[str, list[tuple[str, float]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
 
     for s in samples:
+        agent_key = (s.account_id, s.agent_id)
         for bucket in (
             overall,
             by_account[s.account_id],
-            by_agent[(s.account_id, s.agent_id)],
+            by_agent[agent_key],
         ):
             bucket.sessions += 1
             bucket.turns += s.turns
@@ -89,6 +130,9 @@ def build_summary(
             bucket.tts_agg.extend(s.tts_agg_lags)
             bucket.tts_first.extend(s.tts_first_audio)
             bucket.hears.extend(s.user_hears_sound)
+        for metric_key, _, attr in _METRICS:
+            for latency in getattr(s, attr):
+                by_agent_obs[agent_key][metric_key].append((s.session_id, latency))
 
     accounts_sorted = sorted(
         by_account.keys(),
@@ -111,6 +155,7 @@ def build_summary(
         }
 
     accounts_out: list[dict[str, Any]] = []
+    slow_examples: list[dict[str, Any]] = []
     for account_id in accounts_sorted:
         agents = [
             (aid, ag)
@@ -123,19 +168,35 @@ def build_summary(
                 pair[1],
             )
         )
+        agent_rows: list[dict[str, Any]] = []
+        for _, ag in agents:
+            label = f"{ag}[{account_id}]"
+            agent_rows.append(
+                {
+                    "agent_id": ag,
+                    "label": label,
+                    **pack(by_agent[(account_id, ag)]),
+                }
+            )
+            obs = by_agent_obs[(account_id, ag)]
+            for metric_key, metric_label, _attr in _METRICS:
+                for example in select_tail_examples(obs.get(metric_key, ())):
+                    slow_examples.append(
+                        {
+                            "account_id": account_id,
+                            "agent_id": ag,
+                            "label": label,
+                            "metric": metric_key,
+                            "metric_label": metric_label,
+                            **example,
+                        }
+                    )
         accounts_out.append(
             {
                 "account_id": account_id,
                 "label": account_label(account_id, dict(company_names)),
                 **pack(by_account[account_id]),
-                "agents": [
-                    {
-                        "agent_id": ag,
-                        "label": f"{ag}[{account_id}]",
-                        **pack(by_agent[(account_id, ag)]),
-                    }
-                    for _, ag in agents
-                ],
+                "agents": agent_rows,
             }
         )
 
@@ -143,6 +204,7 @@ def build_summary(
         "overall": pack(overall),
         "accounts": accounts_out,
         "session_count": overall.sessions,
+        "slow_examples": slow_examples,
     }
 
 
@@ -372,6 +434,66 @@ def _latency_table(df: pd.DataFrame, subtitle: str) -> GT:
     )
 
 
+def _slow_examples_table(examples: Sequence[Mapping[str, Any]]) -> GT:
+    df = pd.DataFrame(
+        [
+            {
+                "label": str(ex.get("label") or ""),
+                "metric": str(ex.get("metric_label") or ex.get("metric") or ""),
+                "session_id": str(ex.get("session_id") or ""),
+                "latency": float(ex["latency"]),
+                "p95": float(ex["p95"]),
+                "p99": float(ex["p99"]),
+            }
+            for ex in examples
+        ]
+    )
+    tbl = GT(df, groupname_col="label", id="slow-examples")
+    return (
+        tbl.tab_header(
+            title="慢延迟例子",
+            subtitle="各 agent 自身 p95～p99，每类最多 3 条",
+        )
+        .cols_label(
+            metric="指标",
+            session_id="session_id",
+            latency="延迟",
+            p95="p95",
+            p99="p99",
+        )
+        .fmt_number(columns=["latency", "p95", "p99"], decimals=3)
+        .tab_source_note(source_note=md("同一会话只保留区间内最大延迟。单位：秒。"))
+        .opt_align_table_header("left")
+        .opt_row_striping()
+        .opt_horizontal_padding(scale=1.15)
+        .opt_table_font(font=_FONT_STACK)
+        .tab_options(
+            table_width="100%",
+            table_font_size="13px",
+            table_font_color="#1a1f24",
+            table_border_top_style="solid",
+            table_border_top_width="2px",
+            table_border_top_color="#0f6e56",
+            table_border_bottom_style="solid",
+            table_border_bottom_width="2px",
+            table_border_bottom_color="#0f6e56",
+            heading_align="left",
+            heading_title_font_weight="600",
+            heading_background_color="#ffffff",
+            column_labels_font_weight="600",
+            column_labels_border_top_color="#0f6e56",
+            column_labels_border_bottom_color="#0f6e56",
+            column_labels_border_bottom_width="2px",
+            row_striping_background_color="#f4f7f6",
+            row_group_background_color="#e6f4ef",
+            row_group_font_weight="600",
+            row_group_border_top_color="#0f6e56",
+            row_group_border_bottom_color="#d7dee5",
+            source_notes_font_size="12px",
+        )
+    )
+
+
 def render_report(summary: Mapping[str, Any]) -> str:
     day = str(summary.get("date") or "")
     sample_rate = summary.get("sample_rate")
@@ -389,6 +511,12 @@ def render_report(summary: Mapping[str, Any]) -> str:
     df = pd.DataFrame(rows)
     dist_html = _distribution_table(df, subtitle).as_raw_html()
     latency_html = _latency_table(df, "单位：秒").as_raw_html()
+    examples = list(summary.get("slow_examples") or [])
+    examples_html = ""
+    if examples:
+        examples_html = (
+            f'<div class="block">{_slow_examples_table(examples).as_raw_html()}</div>\n'
+        )
     title = f"Smart-voice 日分析{f' · {day}' if day else ''}"
 
     return (
@@ -415,10 +543,31 @@ def render_report(summary: Mapping[str, Any]) -> str:
         f'<p class="meta">{escape(subtitle)}</p>\n'
         f'<div class="block">{dist_html}</div>\n'
         f'<div class="block">{latency_html}</div>\n'
+        f"{examples_html}"
         "</div>\n"
         "</body>\n"
         "</html>\n"
     )
+
+
+def render_badcases(summary: Mapping[str, Any]) -> str:
+    """慢例子清单。首列是 session_id，便于按会话回查日志。"""
+    lines = ["session_id\tmetric\tagent_id\taccount_id\tlatency"]
+    for ex in summary.get("slow_examples") or []:
+        latency = ex.get("latency")
+        latency_s = "" if latency is None else f"{float(latency):.3f}"
+        lines.append(
+            "\t".join(
+                [
+                    str(ex.get("session_id") or ""),
+                    str(ex.get("metric") or ""),
+                    str(ex.get("agent_id") or ""),
+                    str(ex.get("account_id") or ""),
+                    latency_s,
+                ]
+            )
+        )
+    return "\n".join(lines) + "\n"
 
 
 def write_reports(
@@ -428,9 +577,11 @@ def write_reports(
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "report.html"
     summary_path = report_dir / "summary.json"
+    badcases_path = report_dir / "badcases.txt"
     report_path.write_text(render_report(summary), encoding="utf-8")
     summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    badcases_path.write_text(render_badcases(summary), encoding="utf-8")
     return report_path, summary_path

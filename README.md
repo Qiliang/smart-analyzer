@@ -25,5 +25,5 @@ uv run python schedule.py
 2. **文件浏览**：浏览 `session/` 下 logs、reports、jobs
 
 日志：`session/logs/YYYY-MM-DD/*.txt`（头部写 session_id/uuid，正文去掉重复 `[ID: ...]`；仍兼容旧 `.jsonl`）。默认只保留最近 5 天（可用 `LOG_RETENTION_DAYS` 覆盖），过期目录会在启动、每日 04:10 以及每次分析后删除。  
-报表：`session/reports/YYYY-MM-DD/report.html` 与 `summary.json`  
+报表：`session/reports/YYYY-MM-DD/report.html`、`summary.json` 与 `badcases.txt`  
 任务：`session/jobs/schedules.json`、`runs.jsonl`
